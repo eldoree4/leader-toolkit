@@ -1,23 +1,10 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'package:supabase_flutter/supabase_flutter.dart';
-
-const _supabaseUrl = String.fromEnvironment('SUPABASE_URL');
-const _supabasePublishableKey = String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY');
-const _apiBaseUrl = String.fromEnvironment('API_BASE_URL');
+import 'package:shared_preferences/shared_preferences.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
-  if (_supabaseUrl.isNotEmpty && _supabasePublishableKey.isNotEmpty) {
-    await Supabase.initialize(
-      url: _supabaseUrl,
-      publishableKey: _supabasePublishableKey,
-    );
-  }
-
   runApp(const LeaderToolkitApp());
 }
 
@@ -25,168 +12,17 @@ class LeaderToolkitApp extends StatelessWidget {
   const LeaderToolkitApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final configured =
-        _supabaseUrl.isNotEmpty && _supabasePublishableKey.isNotEmpty;
-
-    return MaterialApp(
-      title: 'Leader Toolkit',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1769AA),
+  Widget build(BuildContext context) => MaterialApp(
+        title: 'Leader Toolkit',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeData(
+          useMaterial3: true,
+          colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1769AA)),
+          scaffoldBackgroundColor: const Color(0xFFF4F7FB),
+          inputDecorationTheme: const InputDecorationTheme(border: OutlineInputBorder()),
         ),
-        scaffoldBackgroundColor: const Color(0xFFF4F7FB),
-        inputDecorationTheme: const InputDecorationTheme(
-          border: OutlineInputBorder(),
-        ),
-      ),
-      home: configured ? const _AuthGate() : const _SetupPage(),
-    );
-  }
-}
-
-class _SetupPage extends StatelessWidget {
-  const _SetupPage();
-
-  @override
-  Widget build(BuildContext context) {
-    return const Scaffold(
-      body: Center(
-        child: Padding(
-          padding: EdgeInsets.all(24),
-          child: Text(
-            'Konfigurasi Supabase belum tersedia. '
-            'Build dengan SUPABASE_URL dan SUPABASE_PUBLISHABLE_KEY.',
-            textAlign: TextAlign.center,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _AuthGate extends StatelessWidget {
-  const _AuthGate();
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<AuthState>(
-      stream: Supabase.instance.client.auth.onAuthStateChange,
-      builder: (context, _) {
-        final session = Supabase.instance.client.auth.currentSession;
-        return session == null ? const _LoginPage() : const _HomePage();
-      },
-    );
-  }
-}
-
-class _LoginPage extends StatefulWidget {
-  const _LoginPage();
-
-  @override
-  State<_LoginPage> createState() => _LoginPageState();
-}
-
-class _LoginPageState extends State<_LoginPage> {
-  final _formKey = GlobalKey<FormState>();
-  final _email = TextEditingController();
-  final _password = TextEditingController();
-  bool _busy = false;
-  String? _error;
-
-  Future<void> _signIn() async {
-    if (!_formKey.currentState!.validate()) return;
-
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-
-    try {
-      await Supabase.instance.client.auth.signInWithPassword(
-        email: _email.text.trim(),
-        password: _password.text,
+        home: const _HomePage(),
       );
-    } on AuthException catch (error) {
-      if (mounted) setState(() => _error = error.message);
-    } catch (error) {
-      if (mounted) setState(() => _error = 'Gagal masuk: $error');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  @override
-  void dispose() {
-    _email.dispose();
-    _password.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Form(
-              key: _formKey,
-              child: ListView(
-                shrinkWrap: true,
-                children: [
-                  const Icon(Icons.factory_outlined, size: 56),
-                  const SizedBox(height: 12),
-                  Text(
-                    'Leader Toolkit',
-                    textAlign: TextAlign.center,
-                    style: Theme.of(context).textTheme.headlineMedium,
-                  ),
-                  const SizedBox(height: 24),
-                  TextFormField(
-                    controller: _email,
-                    keyboardType: TextInputType.emailAddress,
-                    decoration: const InputDecoration(labelText: 'Email'),
-                    validator: (value) {
-                      if (value == null || !value.contains('@')) {
-                        return 'Masukkan email yang valid.';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _password,
-                    obscureText: true,
-                    decoration: const InputDecoration(labelText: 'Password'),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Password wajib diisi.';
-                      }
-                      return null;
-                    },
-                    onFieldSubmitted: (_) => _signIn(),
-                  ),
-                  if (_error != null) ...[
-                    const SizedBox(height: 12),
-                    Text(_error!, style: const TextStyle(color: Colors.red)),
-                  ],
-                  const SizedBox(height: 16),
-                  FilledButton(
-                    onPressed: _busy ? null : _signIn,
-                    child: Text(_busy ? 'Memproses...' : 'Masuk'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _HomePage extends StatefulWidget {
@@ -197,155 +33,244 @@ class _HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<_HomePage> {
-  final _db = Supabase.instance.client;
+  static const _operatorsKey = 'leader_toolkit_operators_v1';
+  static const _productionKey = 'leader_toolkit_production_v1';
   int _tab = 0;
-  String? _role;
-  String? _profileError;
+  bool _loading = true;
+  List<Map<String, dynamic>> _operators = [];
+  List<Map<String, dynamic>> _entries = [];
 
   @override
   void initState() {
     super.initState();
-    _loadProfile();
+    _loadData();
   }
 
-  Future<void> _loadProfile() async {
+  List<Map<String, dynamic>> _decode(String? json) {
+    if (json == null || json.isEmpty) return [];
+    return (jsonDecode(json) as List<dynamic>)
+        .map((row) => Map<String, dynamic>.from(row as Map))
+        .toList();
+  }
+
+  Future<void> _loadData() async {
     try {
-      final user = _db.auth.currentUser;
-      if (user == null) throw Exception('Sesi login tidak ditemukan.');
-
-      final row = await _db
-          .from('profiles')
-          .select('role')
-          .eq('id', user.id)
-          .single();
-
-      if (mounted) {
-        setState(() => _role = row['role'] as String? ?? 'supervisor');
-      }
+      final prefs = await SharedPreferences.getInstance();
+      final operators = _decode(prefs.getString(_operatorsKey));
+      final entries = _decode(prefs.getString(_productionKey));
+      if (!mounted) return;
+      setState(() {
+        _operators = operators;
+        _entries = entries;
+        _loading = false;
+      });
     } catch (error) {
-      if (mounted) {
-        setState(() => _profileError =
-            'Profil Supabase belum tersedia atau tidak dapat dibaca. Pastikan baris profiles memiliki UUID pengguna yang sama. ($error)');
-      }
+      if (!mounted) return;
+      setState(() => _loading = false);
+      _message('Gagal membaca data lokal: $error');
     }
   }
 
-  Future<void> _notify(Future<void> Function() action) async {
-    try {
-      await action();
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('$error')),
-        );
-      }
-    }
+  Future<void> _saveData() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_operatorsKey, jsonEncode(_operators));
+    await prefs.setString(_productionKey, jsonEncode(_entries));
   }
 
-  Future<void> _edit(String table, {Map<String, dynamic>? row}) async {
-    if (_role != 'leader') return;
+  void _message(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  Future<void> _edit({required bool operatorRecord, int? index}) async {
+    final records = operatorRecord ? _operators : _entries;
+    final old = index == null ? null : records[index];
+    final specs = operatorRecord
+        ? const [
+            _Field('name', 'Nama operator'),
+            _Field('line_name', 'Line'),
+            _Field('main_process', 'Proses utama'),
+            _Field('skills', 'Skill (contoh: Obras level 3)', optional: true),
+          ]
+        : const [
+            _Field('style_name', 'Style'),
+            _Field('process', 'Proses'),
+            _Field('line_name', 'Line'),
+            _Field('target', 'Target pcs', numeric: true),
+            _Field('actual', 'Aktual pcs', numeric: true),
+            _Field('defects', 'Defect pcs', numeric: true, optional: true),
+            _Field('downtime_minutes', 'Downtime menit', numeric: true, optional: true),
+          ];
+    final controllers = <String, TextEditingController>{
+      for (final field in specs)
+        field.key: TextEditingController(
+          text: old == null ? (field.numeric ? '0' : '') : '${old[field.key] ?? ''}',
+        ),
+    };
 
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (_) => _RecordDialog(
-        isOperator: table == 'operators',
-        row: row,
-      ),
-    );
-
-    if (result == null) return;
-
-    await _notify(() async {
-      if (row == null) {
-        await _db.from(table).insert(result);
-      } else {
-        await _db.from(table).update(result).eq('id', row['id']);
-      }
-    });
-  }
-
-  Future<void> _delete(String table, Map<String, dynamic> row) async {
-    if (_role != 'leader') return;
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Hapus data?'),
-        content: Text('Hapus "${row['name'] ?? row['style_name'] ?? 'data ini'}"?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Batal'),
+      builder: (dialogContext) => AlertDialog(
+        title: Text(operatorRecord
+            ? (old == null ? 'Tambah operator' : 'Edit operator')
+            : (old == null ? 'Catat produksi' : 'Edit produksi')),
+        content: SizedBox(
+          width: 440,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final field in specs)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: TextField(
+                      controller: controllers[field.key],
+                      keyboardType: field.numeric ? TextInputType.number : TextInputType.text,
+                      decoration: InputDecoration(labelText: field.label),
+                    ),
+                  ),
+              ],
+            ),
           ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Batal')),
           FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Hapus'),
+            onPressed: () {
+              final data = <String, dynamic>{};
+              for (final field in specs) {
+                final value = controllers[field.key]!.text.trim();
+                if (!field.optional && value.isEmpty) {
+                  _message('${field.label} wajib diisi.');
+                  return;
+                }
+                if (field.numeric) {
+                  final number = int.tryParse(value.isEmpty ? '0' : value);
+                  if (number == null || number < 0 || (field.key == 'target' && number == 0)) {
+                    _message('${field.label} harus berupa angka valid.');
+                    return;
+                  }
+                  data[field.key] = number;
+                } else {
+                  data[field.key] = value;
+                }
+              }
+              if (!operatorRecord) {
+                data['created_at'] = old?['created_at'] ?? DateTime.now().toIso8601String();
+              }
+              Navigator.pop(dialogContext, data);
+            },
+            child: const Text('Simpan'),
           ),
         ],
       ),
     );
-
-    if (confirmed == true) {
-      await _notify(() async => _db.from(table).delete().eq('id', row['id']));
+    for (final controller in controllers.values) {
+      controller.dispose();
     }
+    if (result == null || !mounted) return;
+
+    setState(() {
+      if (operatorRecord) {
+        if (index == null) {
+          _operators.add(result);
+        } else {
+          _operators[index] = result;
+        }
+      } else if (index == null) {
+        _entries.insert(0, result);
+      } else {
+        _entries[index] = result;
+      }
+    });
+    try {
+      await _saveData();
+      _message('Data tersimpan di perangkat ini.');
+    } catch (error) {
+      _message('Gagal menyimpan data lokal: $error');
+    }
+  }
+
+  Future<void> _delete({required bool operatorRecord, required int index}) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Hapus data?'),
+        content: const Text('Data akan dihapus dari perangkat ini.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Batal')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Hapus')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() => (operatorRecord ? _operators : _entries).removeAt(index));
+    try {
+      await _saveData();
+      _message('Data dihapus dari perangkat ini.');
+    } catch (error) {
+      _message('Gagal menyimpan perubahan: $error');
+    }
+  }
+
+  Future<void> _clearData() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Hapus semua data lokal?'),
+        content: const Text('Tindakan ini tidak dapat dibatalkan.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Batal')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Hapus semua')),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      _operators = [];
+      _entries = [];
+    });
+    await _saveData();
+    _message('Semua data lokal sudah dihapus.');
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_profileError != null) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Leader Toolkit')),
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Text(_profileError!),
-          ),
-        ),
-      );
-    }
-
-    if (_role == null) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
-    }
-
-    final pages = <Widget>[
-      _Dashboard(db: _db),
-      _DataList(
-        db: _db,
-        table: 'operators',
-        isOperator: true,
-        isLeader: _role == 'leader',
-        onEdit: (row) => _edit('operators', row: row),
-        onDelete: (row) => _delete('operators', row),
-      ),
-      _DataList(
-        db: _db,
-        table: 'production_entries',
-        isOperator: false,
-        isLeader: _role == 'leader',
-        onEdit: (row) => _edit('production_entries', row: row),
-        onDelete: (row) => _delete('production_entries', row),
-      ),
-      _AiPage(db: _db),
-    ];
-
+    const labels = ['Ringkasan', 'Operator', 'Produksi', 'Analisis lokal'];
     return Scaffold(
       appBar: AppBar(
-        title: Text('Leader Toolkit • ${_role == 'leader' ? 'Leader' : 'Supervisor'}'),
+        title: Text('Leader Toolkit • ${labels[_tab]}'),
         actions: [
           IconButton(
-            tooltip: 'Keluar',
-            onPressed: () => _notify(_db.auth.signOut),
-            icon: const Icon(Icons.logout),
+            tooltip: 'Hapus semua data lokal',
+            onPressed: _clearData,
+            icon: const Icon(Icons.delete_sweep_outlined),
           ),
         ],
       ),
-      body: IndexedStack(index: _tab, children: pages),
-      floatingActionButton: _role == 'leader' && (_tab == 1 || _tab == 2)
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : IndexedStack(index: _tab, children: [
+              _Dashboard(entries: _entries),
+              _RecordList(
+                title: 'Operator dan skill',
+                records: _operators,
+                operatorRecord: true,
+                onEdit: (i) => _edit(operatorRecord: true, index: i),
+                onDelete: (i) => _delete(operatorRecord: true, index: i),
+              ),
+              _RecordList(
+                title: 'Produksi, proses dan target',
+                records: _entries,
+                operatorRecord: false,
+                onEdit: (i) => _edit(operatorRecord: false, index: i),
+                onDelete: (i) => _delete(operatorRecord: false, index: i),
+              ),
+              _LocalAnalysis(entries: _entries),
+            ]),
+      floatingActionButton: (_tab == 1 || _tab == 2) && !_loading
           ? FloatingActionButton.extended(
-              onPressed: () => _edit(_tab == 1 ? 'operators' : 'production_entries'),
+              onPressed: () => _edit(operatorRecord: _tab == 1),
               icon: const Icon(Icons.add),
               label: Text(_tab == 1 ? 'Tambah operator' : 'Catat produksi'),
             )
@@ -354,492 +279,172 @@ class _HomePageState extends State<_HomePage> {
         selectedIndex: _tab,
         onDestinationSelected: (index) => setState(() => _tab = index),
         destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.dashboard_outlined),
-            label: 'Ringkasan',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.people_outline),
-            label: 'Operator',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.factory_outlined),
-            label: 'Produksi',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.lightbulb_outline),
-            label: 'AI',
-          ),
+          NavigationDestination(icon: Icon(Icons.dashboard_outlined), label: 'Ringkasan'),
+          NavigationDestination(icon: Icon(Icons.people_outline), label: 'Operator'),
+          NavigationDestination(icon: Icon(Icons.factory_outlined), label: 'Produksi'),
+          NavigationDestination(icon: Icon(Icons.insights_outlined), label: 'Analisis'),
         ],
       ),
     );
   }
 }
 
-class _Dashboard extends StatelessWidget {
-  const _Dashboard({required this.db});
+class _Field {
+  const _Field(this.key, this.label, {this.numeric = false, this.optional = false});
+  final String key;
+  final String label;
+  final bool numeric;
+  final bool optional;
+}
 
-  final SupabaseClient db;
+class _Dashboard extends StatelessWidget {
+  const _Dashboard({required this.entries});
+  final List<Map<String, dynamic>> entries;
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: db
-          .from('production_entries')
-          .stream(primaryKey: ['id'])
-          .order('created_at', ascending: false),
-      builder: (context, snapshot) {
-        final rows = snapshot.data ?? [];
-
-        final target = rows.fold<int>(
-          0,
-          (sum, row) => sum + ((row['target'] as num?)?.toInt() ?? 0),
-        );
-        final actual = rows.fold<int>(
-          0,
-          (sum, row) => sum + ((row['actual'] as num?)?.toInt() ?? 0),
-        );
-        final achievement = target == 0 ? 0.0 : (actual / target) * 100;
-
-        return ListView(
-          padding: const EdgeInsets.all(16),
+    final target = entries.fold<int>(0, (sum, row) => sum + ((row['target'] as num?)?.toInt() ?? 0));
+    final actual = entries.fold<int>(0, (sum, row) => sum + ((row['actual'] as num?)?.toInt() ?? 0));
+    final defects = entries.fold<int>(0, (sum, row) => sum + ((row['defects'] as num?)?.toInt() ?? 0));
+    final achievement = target == 0 ? 0.0 : actual / target * 100;
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: [
+        Text('Ringkasan produksi', style: Theme.of(context).textTheme.headlineSmall),
+        const SizedBox(height: 8),
+        const Text('Berjalan offline. Data hanya disimpan di perangkat ini dan tidak disinkronkan.'),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 10,
+          runSpacing: 10,
           children: [
-            Text(
-              'Ringkasan produksi',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 10,
-              runSpacing: 10,
-              children: [
-                _MetricCard('Catatan', '${rows.length}', Icons.receipt_long),
-                _MetricCard('Target', '$target pcs', Icons.flag),
-                _MetricCard('Aktual', '$actual pcs', Icons.check_circle_outline),
-                _MetricCard(
-                  'Pencapaian',
-                  '${achievement.toStringAsFixed(0)}%',
-                  Icons.trending_up,
-                ),
-              ],
-            ),
-            if (snapshot.hasError)
-              Text('Gagal memuat produksi: ${snapshot.error}'),
-            if (rows.isEmpty &&
-                snapshot.connectionState == ConnectionState.waiting)
-              const Center(child: CircularProgressIndicator()),
-            ...rows.map(
-              (row) => Card(
-                child: ListTile(
-                  title: Text('${row['style_name']} • ${row['process']}'),
-                  subtitle: Text(
-                    '${row['line_name']} • ${row['actual']} / '
-                    '${row['target']} pcs • defect ${row['defects'] ?? 0}',
-                  ),
-                  trailing: Text(
-                    '${row['created_at']}'.split('T').first,
-                  ),
-                ),
-              ),
-            ),
+            _Metric('Catatan', '${entries.length}', Icons.receipt_long),
+            _Metric('Target', '$target pcs', Icons.flag),
+            _Metric('Aktual', '$actual pcs', Icons.check_circle_outline),
+            _Metric('Pencapaian', '${achievement.toStringAsFixed(0)}%', Icons.trending_up),
+            _Metric('Defect', '$defects pcs', Icons.warning_amber_outlined),
           ],
-        );
-      },
+        ),
+        if (entries.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(top: 18),
+            child: Text('Belum ada catatan produksi.'),
+          ),
+      ],
     );
   }
 }
 
-class _MetricCard extends StatelessWidget {
-  const _MetricCard(this.label, this.value, this.icon);
-
+class _Metric extends StatelessWidget {
+  const _Metric(this.label, this.value, this.icon);
   final String label;
   final String value;
   final IconData icon;
 
   @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: (MediaQuery.sizeOf(context).width - 42) / 2,
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(icon),
-              const SizedBox(height: 8),
-              Text(label),
-              Text(
-                value,
-                style: Theme.of(context)
-                    .textTheme
-                    .titleLarge
-                    ?.copyWith(fontWeight: FontWeight.bold),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _DataList extends StatelessWidget {
-  const _DataList({
-    required this.db,
-    required this.table,
-    required this.isOperator,
-    required this.isLeader,
-    required this.onEdit,
-    required this.onDelete,
-  });
-
-  final SupabaseClient db;
-  final String table;
-  final bool isOperator;
-  final bool isLeader;
-  final ValueChanged<Map<String, dynamic>> onEdit;
-  final ValueChanged<Map<String, dynamic>> onDelete;
-
-  @override
-  Widget build(BuildContext context) {
-    return StreamBuilder<List<Map<String, dynamic>>>(
-      stream: db
-          .from(table)
-          .stream(primaryKey: ['id'])
-          .order(isOperator ? 'name' : 'created_at', ascending: false),
-      builder: (context, snapshot) {
-        final rows = snapshot.data ?? [];
-
-        return ListView(
-          padding: const EdgeInsets.all(16),
-          children: [
-            Text(
-              isOperator ? 'Operator dan skill' : 'Produksi, proses dan target',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            if (snapshot.hasError)
-              Text('Gagal memuat data: ${snapshot.error}'),
-            if (rows.isEmpty && !snapshot.hasError)
-              const Padding(
-                padding: EdgeInsets.only(top: 12),
-                child: Text('Belum ada data.'),
-              ),
-            ...rows.map(
-              (row) => Card(
-                child: ListTile(
-                  title: Text(
-                    isOperator
-                        ? '${row['name']}'
-                        : '${row['style_name']} • ${row['process']}',
-                  ),
-                  subtitle: Text(
-                    isOperator
-                        ? '${row['line_name']} • ${row['main_process']}\n'
-                            'Skill: ${jsonEncode(row['skills'] ?? [])}'
-                        : '${row['line_name']} • aktual ${row['actual']} / '
-                            '${row['target']} • defect ${row['defects'] ?? 0} • '
-                            'downtime ${row['downtime_minutes'] ?? 0} menit',
-                  ),
-                  isThreeLine: true,
-                  trailing: isLeader
-                      ? PopupMenuButton<String>(
-                          onSelected: (action) {
-                            if (action == 'edit') {
-                              onEdit(row);
-                            } else {
-                              onDelete(row);
-                            }
-                          },
-                          itemBuilder: (_) => const [
-                            PopupMenuItem(
-                              value: 'edit',
-                              child: Text('Edit'),
-                            ),
-                            PopupMenuItem(
-                              value: 'delete',
-                              child: Text('Hapus'),
-                            ),
-                          ],
-                        )
-                      : null,
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _RecordDialog extends StatefulWidget {
-  const _RecordDialog({
-    required this.isOperator,
-    this.row,
-  });
-
-  final bool isOperator;
-  final Map<String, dynamic>? row;
-
-  @override
-  State<_RecordDialog> createState() => _RecordDialogState();
-}
-
-class _RecordDialogState extends State<_RecordDialog> {
-  final _formKey = GlobalKey<FormState>();
-  late final Map<String, TextEditingController> _fields;
-
-  static const _operatorFields = [
-    'name',
-    'line_name',
-    'main_process',
-    'skills',
-  ];
-
-  static const _productionFields = [
-    'style_name',
-    'process',
-    'line_name',
-    'target',
-    'actual',
-    'defects',
-    'downtime_minutes',
-  ];
-
-  List<String> get _names =>
-      widget.isOperator ? _operatorFields : _productionFields;
-
-  @override
-  void initState() {
-    super.initState();
-    _fields = {
-      for (final name in _names)
-        name: TextEditingController(text: _initialValue(name)),
-    };
-  }
-
-  String _initialValue(String name) {
-    final value = widget.row?[name];
-
-    if (name == 'skills' && value is List) {
-      return value
-          .map((item) => '${item['process']}: ${item['level']}')
-          .join('\n');
-    }
-
-    if (value != null) return '$value';
-
-    return const {
-      'actual': '0',
-      'defects': '0',
-      'downtime_minutes': '0',
-    }[name] ?? '';
-  }
-
-  @override
-  void dispose() {
-    for (final controller in _fields.values) {
-      controller.dispose();
-    }
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(
-        widget.isOperator
-            ? (widget.row == null ? 'Tambah operator' : 'Edit operator')
-            : (widget.row == null ? 'Catat produksi' : 'Edit produksi'),
-      ),
-      content: SizedBox(
-        width: 440,
-        child: Form(
-          key: _formKey,
-          child: SingleChildScrollView(
+  Widget build(BuildContext context) => SizedBox(
+        width: (MediaQuery.sizeOf(context).width - 42) / 2,
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.all(14),
             child: Column(
-              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                for (final name in _names)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: TextFormField(
-                      controller: _fields[name],
-                      keyboardType: _isNumeric(name)
-                          ? TextInputType.number
-                          : TextInputType.text,
-                      minLines: name == 'skills' ? 3 : 1,
-                      maxLines: name == 'skills' ? 5 : 1,
-                      decoration: InputDecoration(
-                        labelText: _label(name),
-                        hintText: name == 'skills' ? 'Obras: 3' : null,
-                      ),
-                      validator: (value) {
-                        final text = value?.trim() ?? '';
-                        if (!_isOptional(name) && text.isEmpty) {
-                          return 'Wajib diisi.';
-                        }
-                        if (_isNumeric(name)) {
-                          final number = int.tryParse(text);
-                          if (number == null ||
-                              number < (name == 'target' ? 1 : 0)) {
-                            return 'Masukkan angka yang valid.';
-                          }
-                        }
-                        return null;
-                      },
-                    ),
-                  ),
+                Icon(icon),
+                const SizedBox(height: 8),
+                Text(label),
+                Text(
+                  value,
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(fontWeight: FontWeight.bold),
+                ),
               ],
             ),
           ),
         ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Batal'),
-        ),
-        FilledButton(
-          onPressed: () {
-            if (!_formKey.currentState!.validate()) return;
-
-            final data = <String, dynamic>{};
-            for (final name in _names) {
-              final value = _fields[name]!.text.trim();
-
-              if (name == 'skills') {
-                data[name] = value
-                    .split('\n')
-                    .where((line) => line.trim().isNotEmpty)
-                    .map((line) {
-                  final parts = line.split(':');
-                  final process = parts.first.trim();
-                  final level = int.tryParse(
-                        parts.length > 1 ? parts.last.trim() : '1',
-                      ) ??
-                      1;
-                  return {
-                    'process': process,
-                    'level': level.clamp(1, 5),
-                  };
-                }).toList();
-              } else if (_isNumeric(name)) {
-                data[name] = int.parse(value.isEmpty ? '0' : value);
-              } else {
-                data[name] = value;
-              }
-            }
-
-            Navigator.pop(context, data);
-          },
-          child: const Text('Simpan'),
-        ),
-      ],
-    );
-  }
-
-  bool _isNumeric(String name) =>
-      const {'target', 'actual', 'defects', 'downtime_minutes'}.contains(name);
-
-  bool _isOptional(String name) =>
-      const {'skills', 'actual', 'defects', 'downtime_minutes'}.contains(name);
-
-  String _label(String name) => const {
-        'name': 'Nama operator',
-        'line_name': 'Line',
-        'main_process': 'Proses utama',
-        'skills': 'Skill per baris (proses: level)',
-        'style_name': 'Style',
-        'process': 'Proses',
-        'target': 'Target pcs',
-        'actual': 'Aktual pcs',
-        'defects': 'Defect pcs',
-        'downtime_minutes': 'Downtime menit',
-      }[name]!;
+      );
 }
 
-class _AiPage extends StatefulWidget {
-  const _AiPage({required this.db});
+class _RecordList extends StatelessWidget {
+  const _RecordList({
+    required this.title,
+    required this.records,
+    required this.operatorRecord,
+    required this.onEdit,
+    required this.onDelete,
+  });
 
-  final SupabaseClient db;
+  final String title;
+  final List<Map<String, dynamic>> records;
+  final bool operatorRecord;
+  final ValueChanged<int> onEdit;
+  final ValueChanged<int> onDelete;
 
   @override
-  State<_AiPage> createState() => _AiPageState();
+  Widget build(BuildContext context) => ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Text(title, style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 8),
+          const Text('Tersimpan lokal di perangkat ini.'),
+          if (records.isEmpty)
+            const Padding(
+              padding: EdgeInsets.only(top: 16),
+              child: Text('Belum ada data.'),
+            ),
+          for (var i = 0; i < records.length; i++)
+            Card(
+              child: ListTile(
+                title: Text(
+                  operatorRecord
+                      ? '${records[i]['name']}'
+                      : '${records[i]['style_name']} • ${records[i]['process']}',
+                ),
+                subtitle: Text(
+                  operatorRecord
+                      ? '${records[i]['line_name']} • ${records[i]['main_process']}\nSkill: ${records[i]['skills'] ?? '-'}'
+                      : '${records[i]['line_name']} • aktual ${records[i]['actual']} / ${records[i]['target']} pcs • defect ${records[i]['defects'] ?? 0} • downtime ${records[i]['downtime_minutes'] ?? 0} menit',
+                ),
+                isThreeLine: true,
+                trailing: PopupMenuButton<String>(
+                  onSelected: (action) => action == 'edit' ? onEdit(i) : onDelete(i),
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(value: 'edit', child: Text('Edit')),
+                    PopupMenuItem(value: 'delete', child: Text('Hapus')),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      );
 }
 
-class _AiPageState extends State<_AiPage> {
-  bool _busy = false;
-  String _answer = 'Jalankan analisis untuk mendapatkan ringkasan produksi.';
-
-  Future<void> _analyze() async {
-    if (_apiBaseUrl.isEmpty) {
-      setState(() => _answer = 'API_BASE_URL belum diatur pada build.');
-      return;
-    }
-
-    setState(() {
-      _busy = true;
-      _answer = '';
-    });
-
-    try {
-      final token = widget.db.auth.currentSession?.accessToken;
-      final response = await http
-          .post(
-            Uri.parse('$_apiBaseUrl/v1/ai/analyze'),
-            headers: {
-              'Content-Type': 'application/json',
-              if (token != null) 'Authorization': 'Bearer $token',
-            },
-            body: jsonEncode({
-              'question':
-                  'Analisis bottleneck produksi sewing dan berikan tindakan prioritas.',
-            }),
-          )
-          .timeout(const Duration(seconds: 45));
-
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw Exception('Backend ${response.statusCode}: ${response.body}');
-      }
-
-      final data = jsonDecode(response.body) as Map<String, dynamic>;
-      setState(() {
-        _answer = data['analysis']?.toString() ?? 'Tidak ada hasil analisis.';
-      });
-    } catch (error) {
-      setState(() => _answer = 'Analisis gagal: $error');
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
+class _LocalAnalysis extends StatelessWidget {
+  const _LocalAnalysis({required this.entries});
+  final List<Map<String, dynamic>> entries;
 
   @override
   Widget build(BuildContext context) {
+    final target = entries.fold<int>(0, (sum, row) => sum + ((row['target'] as num?)?.toInt() ?? 0));
+    final actual = entries.fold<int>(0, (sum, row) => sum + ((row['actual'] as num?)?.toInt() ?? 0));
+    final defects = entries.fold<int>(0, (sum, row) => sum + ((row['defects'] as num?)?.toInt() ?? 0));
+    final percent = target == 0 ? 0.0 : actual / target * 100;
+    final analysis = entries.isEmpty
+        ? 'Tambahkan catatan produksi terlebih dahulu. Analisis ini berjalan di perangkat dan bukan AI online.'
+        : 'Analisis lokal untuk ${entries.length} catatan: pencapaian agregat ${percent.toStringAsFixed(1)}%, total defect $defects pcs. ${percent < 100 ? 'Pencapaian masih di bawah target; periksa proses dengan aktual terendah dan hambatan di line.' : 'Target agregat tercapai; tetap pantau kualitas dan downtime.'}';
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
-        Text(
-          'AI problem solving',
-          style: Theme.of(context).textTheme.headlineSmall,
-        ),
+        Text('Analisis lokal', style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 8),
-        const Text(
-          'Rekomendasi AI adalah bantuan analisis, bukan bukti sebab-akibat. '
-          'Validasi kondisi di lantai produksi.',
-        ),
-        const SizedBox(height: 12),
-        FilledButton.icon(
-          onPressed: _busy ? null : _analyze,
-          icon: const Icon(Icons.auto_awesome),
-          label: Text(_busy ? 'Menganalisis...' : 'Analisis produksi'),
-        ),
+        const Text('Tidak menggunakan AI, server, atau koneksi internet.'),
         const SizedBox(height: 12),
         Card(
           child: Padding(
             padding: const EdgeInsets.all(16),
-            child: Text(_answer),
+            child: Text(analysis),
           ),
         ),
       ],
