@@ -27,9 +27,8 @@ jobs:
           if [ ! -d android ]; then
             flutter create --platforms=android --project-name=leader_toolkit .
           fi
-          if [ -f android/app/src/main/AndroidManifest.xml ]; then
-            sed -i '/android.permission.INTERNET/d' android/app/src/main/AndroidManifest.xml
-          fi
+          find android -name AndroidManifest.xml -type f \
+            -exec sed -i '/android.permission.INTERNET/d' {} +
 
       - name: Install dependencies
         run: flutter pub get
