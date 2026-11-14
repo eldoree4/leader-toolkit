@@ -27,6 +27,9 @@ jobs:
           if [ ! -d android ]; then
             flutter create --platforms=android --project-name=leader_toolkit .
           fi
+          if [ -f android/app/src/main/AndroidManifest.xml ]; then
+            sed -i '/android.permission.INTERNET/d' android/app/src/main/AndroidManifest.xml
+          fi
 
       - name: Install dependencies
         run: flutter pub get
@@ -42,22 +45,8 @@ jobs:
             echo "No Flutter tests found; skipping."
           fi
 
-      - name: Check required build variables
-        env:
-          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
-          SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY || vars.SUPABASE_ANON_KEY }}
-        run: |
-          test -n "$SUPABASE_URL" || (echo "Missing Actions variable SUPABASE_URL" && exit 1)
-          test -n "$SUPABASE_PUBLISHABLE_KEY" || (echo "Missing SUPABASE_PUBLISHABLE_KEY (or legacy SUPABASE_ANON_KEY)" && exit 1)
-
       - name: Build release APK
-        env:
-          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
-          SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY || vars.SUPABASE_ANON_KEY }}
-        run: |
-          flutter build apk --release \
-            --dart-define=SUPABASE_URL="$SUPABASE_URL" \
-            --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY"
+        run: flutter build apk --release
 
       - uses: actions/upload-artifact@v4
         with:
