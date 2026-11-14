@@ -1,15 +1,14 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:leader_toolkit/main.dart';
 
 void main() {
-  testWidgets('shows setup instructions without build configuration', (
-    tester,
-  ) async {
-    await tester.pumpWidget(const LeaderToolkitApp());
+  testWidgets('menampilkan aplikasi offline', (tester) async {
+    SharedPreferences.setMockInitialValues({});
 
-    expect(
-      find.textContaining('Konfigurasi Supabase belum tersedia'),
-      findsOneWidget,
-    );
+    await tester.pumpWidget(const LeaderToolkitApp());
+    await tester.pumpAndSettle();
+
+    expect(find.text('Ringkasan produksi'), findsOneWidget);
   });
 }
