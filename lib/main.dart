@@ -1,9 +1,20 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-void main() => runApp(const LeaderToolkitApp());
+const _supabaseUrl = String.fromEnvironment('SUPABASE_URL');
+const _supabaseAnonKey = String.fromEnvironment('SUPABASE_ANON_KEY');
+const _apiBaseUrl = String.fromEnvironment('API_BASE_URL');
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  if (_supabaseUrl.isNotEmpty && _supabaseAnonKey.isNotEmpty) {
+    await Supabase.initialize(url: _supabaseUrl, anonKey: _supabaseAnonKey);
+  }
+  runApp(const LeaderToolkitApp());
+}
 
 class LeaderToolkitApp extends StatelessWidget {
   const LeaderToolkitApp({super.key});
@@ -16,613 +27,466 @@ class LeaderToolkitApp extends StatelessWidget {
           useMaterial3: true,
           colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1769AA)),
           scaffoldBackgroundColor: const Color(0xFFF4F7FB),
-          inputDecorationTheme: const InputDecorationTheme(
-            border: OutlineInputBorder(),
+          inputDecorationTheme: const InputDecorationTheme(border: OutlineInputBorder()),
+        ),
+        home: _supabaseUrl.isEmpty || _supabaseAnonKey.isEmpty
+            ? const _SetupPage()
+            : const _AuthGate(),
+      );
+}
+
+class _SetupPage extends StatelessWidget {
+  const _SetupPage();
+
+  @override
+  Widget build(BuildContext context) => const Scaffold(
+        body: Center(
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: Text(
+              'Konfigurasi Supabase belum tersedia. Build dengan SUPABASE_URL dan SUPABASE_ANON_KEY.',
+              textAlign: TextAlign.center,
+            ),
           ),
         ),
-        home: const ToolkitHome(),
       );
 }
 
-class Skill {
-  const Skill(this.process, this.level);
-  final String process;
-  final int level;
-
-  Map<String, dynamic> toJson() => {'process': process, 'level': level};
-  factory Skill.fromJson(Map<String, dynamic> json) =>
-      Skill(json['process'] as String? ?? '', (json['level'] as num?)?.toInt() ?? 1);
-}
-
-class SewingOperator {
-  const SewingOperator({
-    required this.id,
-    required this.name,
-    required this.line,
-    required this.process,
-    required this.skills,
-  });
-
-  final String id;
-  final String name;
-  final String line;
-  final String process;
-  final List<Skill> skills;
-
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'line': line,
-        'process': process,
-        'skills': skills.map((skill) => skill.toJson()).toList(),
-      };
-
-  factory SewingOperator.fromJson(Map<String, dynamic> json) => SewingOperator(
-        id: json['id'] as String? ?? UniqueKey().toString(),
-        name: json['name'] as String? ?? '',
-        line: json['line'] as String? ?? '',
-        process: json['process'] as String? ?? '',
-        skills: (json['skills'] as List<dynamic>? ?? [])
-            .whereType<Map<String, dynamic>>()
-            .map(Skill.fromJson)
-            .toList(),
-      );
-}
-
-class StyleProduction {
-  const StyleProduction({
-    required this.id,
-    required this.name,
-    required this.process,
-    required this.target,
-    required this.actual,
-  });
-
-  final String id;
-  final String name;
-  final String process;
-  final int target;
-  final int actual;
-
-  double get achievement => target <= 0 ? 0 : actual / target * 100;
-
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'process': process,
-        'target': target,
-        'actual': actual,
-      };
-
-  factory StyleProduction.fromJson(Map<String, dynamic> json) => StyleProduction(
-        id: json['id'] as String? ?? UniqueKey().toString(),
-        name: json['name'] as String? ?? '',
-        process: json['process'] as String? ?? '',
-        target: (json['target'] as num?)?.toInt() ?? 0,
-        actual: (json['actual'] as num?)?.toInt() ?? 0,
-      );
-}
-
-class ToolkitHome extends StatefulWidget {
-  const ToolkitHome({super.key});
+class _AuthGate extends StatelessWidget {
+  const _AuthGate();
 
   @override
-  State<ToolkitHome> createState() => _ToolkitHomeState();
+  Widget build(BuildContext context) => StreamBuilder<AuthState>(
+        stream: Supabase.instance.client.auth.onAuthStateChange,
+        builder: (context, _) => Supabase.instance.client.auth.currentSession == null
+            ? const _LoginPage()
+            : const _HomePage(),
+      );
 }
 
-class _ToolkitHomeState extends State<ToolkitHome> {
-  static const _operatorsKey = 'operators_v1';
-  static const _stylesKey = 'styles_v1';
-
-  List<SewingOperator> _operators = [];
-  List<StyleProduction> _styles = [];
-  int _tab = 0;
-  bool _loading = true;
-
+class _LoginPage extends StatefulWidget {
+  const _LoginPage();
   @override
-  void initState() {
-    super.initState();
-    _loadData();
-  }
+  State<_LoginPage> createState() => _LoginPageState();
+}
 
-  Future<void> _loadData() async {
-    final prefs = await SharedPreferences.getInstance();
+class _LoginPageState extends State<_LoginPage> {
+  final _formKey = GlobalKey<FormState>();
+  final _email = TextEditingController();
+  final _password = TextEditingController();
+  bool _busy = false;
+  String? _error;
+
+  Future<void> _signIn() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() { _busy = true; _error = null; });
     try {
-      final operatorJson = jsonDecode(prefs.getString(_operatorsKey) ?? '[]') as List<dynamic>;
-      final styleJson = jsonDecode(prefs.getString(_stylesKey) ?? '[]') as List<dynamic>;
-      _operators = operatorJson
-          .whereType<Map<String, dynamic>>()
-          .map(SewingOperator.fromJson)
-          .toList();
-      _styles = styleJson
-          .whereType<Map<String, dynamic>>()
-          .map(StyleProduction.fromJson)
-          .toList();
-    } catch (_) {
-      _operators = [];
-      _styles = [];
+      await Supabase.instance.client.auth.signInWithPassword(
+        email: _email.text.trim(), password: _password.text,
+      );
+    } on AuthException catch (e) {
+      setState(() => _error = e.message);
+    } catch (e) {
+      setState(() => _error = 'Gagal masuk: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
-    if (mounted) setState(() => _loading = false);
   }
 
-  Future<void> _saveData() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_operatorsKey, jsonEncode(_operators.map((e) => e.toJson()).toList()));
-    await prefs.setString(_stylesKey, jsonEncode(_styles.map((e) => e.toJson()).toList()));
-  }
+  @override
+  void dispose() { _email.dispose(); _password.dispose(); super.dispose(); }
 
-  Future<void> _editOperator([SewingOperator? existing]) async {
-    final result = await showDialog<SewingOperator>(
-      context: context,
-      builder: (_) => OperatorFormDialog(operator: existing),
-    );
-    if (result == null) return;
-    setState(() {
-      final index = _operators.indexWhere((item) => item.id == result.id);
-      if (index < 0) {
-        _operators = [..._operators, result];
-      } else {
-        _operators = [..._operators]..[index] = result;
-      }
-    });
-    await _saveData();
-  }
-
-  Future<void> _editStyle([StyleProduction? existing]) async {
-    final result = await showDialog<StyleProduction>(
-      context: context,
-      builder: (_) => StyleFormDialog(style: existing),
-    );
-    if (result == null) return;
-    setState(() {
-      final index = _styles.indexWhere((item) => item.id == result.id);
-      if (index < 0) {
-        _styles = [..._styles, result];
-      } else {
-        _styles = [..._styles]..[index] = result;
-      }
-    });
-    await _saveData();
-  }
-
-  Future<void> _deleteOperator(SewingOperator operator) async {
-    if (!await _confirmDelete(operator.name)) return;
-    setState(() => _operators = _operators.where((item) => item.id != operator.id).toList());
-    await _saveData();
-  }
-
-  Future<void> _deleteStyle(StyleProduction style) async {
-    if (!await _confirmDelete(style.name)) return;
-    setState(() => _styles = _styles.where((item) => item.id != style.id).toList());
-    await _saveData();
-  }
-
-  Future<bool> _confirmDelete(String name) async =>
-      await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Hapus data?'),
-          content: Text('Data "$name" akan dihapus dari perangkat.'),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Batal')),
-            FilledButton.tonal(onPressed: () => Navigator.pop(context, true), child: const Text('Hapus')),
-          ],
+  @override
+  Widget build(BuildContext context) => Scaffold(
+        body: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Form(
+                key: _formKey,
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    const Icon(Icons.factory_outlined, size: 56),
+                    const SizedBox(height: 12),
+                    Text('Leader Toolkit', textAlign: TextAlign.center,
+                        style: Theme.of(context).textTheme.headlineMedium),
+                    const SizedBox(height: 24),
+                    TextFormField(
+                      controller: _email,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: const InputDecoration(labelText: 'Email'),
+                      validator: (v) => v == null || !v.contains('@') ? 'Masukkan email yang valid.' : null,
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: _password,
+                      obscureText: true,
+                      decoration: const InputDecoration(labelText: 'Password'),
+                      validator: (v) => v == null || v.isEmpty ? 'Password wajib diisi.' : null,
+                      onFieldSubmitted: (_) => _signIn(),
+                    ),
+                    if (_error != null) ...[
+                      const SizedBox(height: 12),
+                      Text(_error!, style: const TextStyle(color: Colors.red)),
+                    ],
+                    const SizedBox(height: 16),
+                    FilledButton(
+                      onPressed: _busy ? null : _signIn,
+                      child: Text(_busy ? 'Memproses...' : 'Masuk'),
+                    ),
+                    const SizedBox(height: 8),
+                    const Text('Akun dibuat oleh administrator Supabase.', textAlign: TextAlign.center),
+                  ],
+                ),
+              ),
+            ),
+          ),
         ),
-      ) ??
-      false;
+      );
+}
+
+class _HomePage extends StatefulWidget {
+  const _HomePage();
+  @override
+  State<_HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<_HomePage> {
+  final _db = Supabase.instance.client;
+  int _tab = 0;
+  String? _role;
+  String? _profileError;
+
+  bool get _isLeader => _role == 'leader';
+
+  @override
+  void initState() { super.initState(); _loadProfile(); }
+
+  Future<void> _loadProfile() async {
+    try {
+      final user = _db.auth.currentUser;
+      if (user == null) throw const AuthException('Sesi login berakhir.');
+      final row = await _db.from('profiles').select('role').eq('id', user.id).single();
+      if (mounted) setState(() => _role = row['role'] as String? ?? 'supervisor');
+    } catch (e) {
+      if (mounted) setState(() => _profileError = 'Profil Supabase belum tersedia atau tidak dapat dibaca. Pastikan baris profiles memiliki UUID pengguna yang sama. ($e)');
+    }
+  }
+
+  Future<void> _notify(Future<void> Function() action) async {
+    try { await action(); }
+    catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
+  Future<void> _edit(String table, {Map<String, dynamic>? row}) async {
+    if (!_isLeader) return;
+    final isOperator = table == 'operators';
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => _RecordDialog(isOperator: isOperator, row: row),
+    );
+    if (result == null) return;
+    await _notify(() async {
+      if (row == null) {
+        await _db.from(table).insert(result);
+      } else {
+        await _db.from(table).update(result).eq('id', row['id']);
+      }
+    });
+  }
+
+  Future<void> _delete(String table, Map<String, dynamic> row) async {
+    if (!_isLeader) return;
+    final name = row['name'] ?? row['style_name'] ?? 'data ini';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Hapus data?'),
+        content: Text('Hapus "$name"? Tindakan ini tidak dapat dibatalkan.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Batal')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Hapus')),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await _notify(() async => _db.from(table).delete().eq('id', row['id']));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    if (_loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (_profileError != null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Leader Toolkit')),
+        body: Center(child: Padding(padding: const EdgeInsets.all(24), child: Text(_profileError!))),
+      );
     }
-    final pages = <Widget>[
-      DashboardPage(operators: _operators, styles: _styles),
-      OperatorsPage(operators: _operators, onEdit: _editOperator, onDelete: _deleteOperator),
-      StylesPage(styles: _styles, onEdit: _editStyle, onDelete: _deleteStyle),
-      InsightsPage(operators: _operators, styles: _styles),
+    if (_role == null) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+
+    final pages = [
+      _Dashboard(db: _db),
+      _DataList(db: _db, table: 'operators', isOperator: true, isLeader: _isLeader,
+          onEdit: (row) => _edit('operators', row: row), onDelete: (row) => _delete('operators', row)),
+      _DataList(db: _db, table: 'production_entries', isOperator: false, isLeader: _isLeader,
+          onEdit: (row) => _edit('production_entries', row: row), onDelete: (row) => _delete('production_entries', row)),
+      _AiPage(db: _db),
     ];
-    final canAdd = _tab == 1 || _tab == 2;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Leader Toolkit'), centerTitle: false),
+      appBar: AppBar(
+        title: Text('Leader Toolkit • ${_isLeader ? 'Leader' : 'Supervisor'}'),
+        actions: [
+          IconButton(tooltip: 'Keluar', onPressed: () => _notify(() => _db.auth.signOut()), icon: const Icon(Icons.logout)),
+        ],
+      ),
       body: IndexedStack(index: _tab, children: pages),
-      floatingActionButton: canAdd
+      floatingActionButton: _isLeader && (_tab == 1 || _tab == 2)
           ? FloatingActionButton.extended(
-              onPressed: () => _tab == 1 ? _editOperator() : _editStyle(),
+              onPressed: () => _edit(_tab == 1 ? 'operators' : 'production_entries'),
               icon: const Icon(Icons.add),
-              label: Text(_tab == 1 ? 'Tambah operator' : 'Tambah style'),
+              label: Text(_tab == 1 ? 'Tambah operator' : 'Catat produksi'),
             )
           : null,
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
         onDestinationSelected: (index) => setState(() => _tab = index),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.dashboard_outlined), selectedIcon: Icon(Icons.dashboard), label: 'Ringkasan'),
-          NavigationDestination(icon: Icon(Icons.people_outline), selectedIcon: Icon(Icons.people), label: 'Operator'),
-          NavigationDestination(icon: Icon(Icons.checkroom_outlined), selectedIcon: Icon(Icons.checkroom), label: 'Style'),
-          NavigationDestination(icon: Icon(Icons.lightbulb_outline), selectedIcon: Icon(Icons.lightbulb), label: 'Insight'),
+          NavigationDestination(icon: Icon(Icons.dashboard_outlined), label: 'Ringkasan'),
+          NavigationDestination(icon: Icon(Icons.people_outline), label: 'Operator'),
+          NavigationDestination(icon: Icon(Icons.factory_outlined), label: 'Produksi'),
+          NavigationDestination(icon: Icon(Icons.lightbulb_outline), label: 'AI'),
         ],
       ),
     );
   }
 }
 
-class DashboardPage extends StatelessWidget {
-  const DashboardPage({super.key, required this.operators, required this.styles});
-  final List<SewingOperator> operators;
-  final List<StyleProduction> styles;
+class _Dashboard extends StatelessWidget {
+  const _Dashboard({required this.db});
+  final SupabaseClient db;
 
   @override
-  Widget build(BuildContext context) {
-    final totalTarget = styles.fold<int>(0, (sum, style) => sum + style.target);
-    final totalActual = styles.fold<int>(0, (sum, style) => sum + style.actual);
-    final attainment = totalTarget == 0 ? 0.0 : totalActual / totalTarget * 100;
-    final belowTarget = styles.where((style) => style.actual < style.target).length;
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        Text('Ringkasan produksi', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
-        const SizedBox(height: 4),
-        const Text('Data tersimpan di perangkat ini dan tetap tersedia saat offline.'),
-        const SizedBox(height: 16),
-        Wrap(spacing: 12, runSpacing: 12, children: [
-          _MetricCard(label: 'Operator', value: '${operators.length}', icon: Icons.people, color: Colors.blue),
-          _MetricCard(label: 'Style aktif', value: '${styles.length}', icon: Icons.checkroom, color: Colors.purple),
-          _MetricCard(label: 'Output / target', value: '$totalActual / $totalTarget', icon: Icons.track_changes, color: Colors.teal),
-          _MetricCard(label: 'Pencapaian', value: '${attainment.toStringAsFixed(0)}%', icon: Icons.trending_up, color: Colors.orange),
-        ]),
-        const SizedBox(height: 24),
-        Text('Pantauan style', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-        const SizedBox(height: 8),
-        if (styles.isEmpty)
-          const _EmptyState(message: 'Belum ada data style. Buka tab Style untuk menambahkan target dan output.')
-        else
-          ...styles.map((style) => _StyleCard(style: style, compact: true)),
-        if (styles.isNotEmpty && belowTarget > 0) ...[
-          const SizedBox(height: 8),
-          Text('$belowTarget style masih di bawah target.', style: TextStyle(color: Colors.orange[900], fontWeight: FontWeight.w600)),
-        ],
-      ],
-    );
-  }
-}
-
-class OperatorsPage extends StatelessWidget {
-  const OperatorsPage({super.key, required this.operators, required this.onEdit, required this.onDelete});
-  final List<SewingOperator> operators;
-  final ValueChanged<SewingOperator> onEdit;
-  final ValueChanged<SewingOperator> onDelete;
-
-  @override
-  Widget build(BuildContext context) => ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 90),
-        children: [
-          Text('Operator sewing', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 12),
-          if (operators.isEmpty)
-            const _EmptyState(message: 'Belum ada operator. Tekan “Tambah operator” untuk mulai mengisi data.')
-          else
-            ...operators.map((operator) => Card(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  child: Padding(
-                    padding: const EdgeInsets.all(14),
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Row(children: [
-                        Expanded(child: Text(operator.name, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold))),
-                        IconButton(tooltip: 'Edit', onPressed: () => onEdit(operator), icon: const Icon(Icons.edit_outlined)),
-                        IconButton(tooltip: 'Hapus', onPressed: () => onDelete(operator), icon: const Icon(Icons.delete_outline)),
-                      ]),
-                      Text('${operator.line} • Proses utama: ${operator.process}'),
-                      const SizedBox(height: 8),
-                      if (operator.skills.isEmpty)
-                        const Text('Belum ada skill dicatat.')
-                      else
-                        Wrap(spacing: 6, runSpacing: 4, children: operator.skills.map((skill) => Chip(
-                              label: Text('${skill.process} • Level ${skill.level}/5'),
-                              visualDensity: VisualDensity.compact,
-                            )).toList()),
-                    ]),
-                  ),
-                )),
-        ],
-      );
-}
-
-class StylesPage extends StatelessWidget {
-  const StylesPage({super.key, required this.styles, required this.onEdit, required this.onDelete});
-  final List<StyleProduction> styles;
-  final ValueChanged<StyleProduction> onEdit;
-  final ValueChanged<StyleProduction> onDelete;
-
-  @override
-  Widget build(BuildContext context) => ListView(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 90),
-        children: [
-          Text('Style, proses & target', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 12),
-          if (styles.isEmpty)
-            const _EmptyState(message: 'Belum ada style. Tambahkan style, proses, target harian, dan output aktual.')
-          else
-            ...styles.map((style) => Card(
-                  margin: const EdgeInsets.only(bottom: 10),
-                  child: Column(children: [
-                    ListTile(
-                      title: Text(style.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                      subtitle: Text('${style.process} • Target ${style.target} • Aktual ${style.actual}'),
-                      trailing: PopupMenuButton<String>(
-                        onSelected: (value) => value == 'edit' ? onEdit(style) : onDelete(style),
-                        itemBuilder: (_) => const [
-                          PopupMenuItem(value: 'edit', child: Text('Edit target/output')),
-                          PopupMenuItem(value: 'delete', child: Text('Hapus style')),
-                        ],
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
-                      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        LinearProgressIndicator(value: (style.achievement / 100).clamp(0.0, 1.0), minHeight: 8),
-                        const SizedBox(height: 6),
-                        Text('Pencapaian ${style.achievement.toStringAsFixed(1)}% • Selisih ${style.actual - style.target} pcs'),
-                      ]),
-                    ),
-                  ]),
-                )),
-        ],
-      );
-}
-
-class InsightsPage extends StatelessWidget {
-  const InsightsPage({super.key, required this.operators, required this.styles});
-  final List<SewingOperator> operators;
-  final List<StyleProduction> styles;
-
-  @override
-  Widget build(BuildContext context) {
-    final issues = <({String title, String detail, IconData icon})>[];
-    for (final style in styles.where((item) => item.target > 0 && item.actual < item.target * .9)) {
-      issues.add((title: 'Periksa proses ${style.process}', detail: '${style.name}: ${style.actual} dari target ${style.target} (${style.achievement.toStringAsFixed(0)}%). Validasi downtime, material, kualitas, dan keseimbangan beban sebelum menentukan tindakan.', icon: Icons.warning_amber));
-    }
-    for (final operator in operators.where((item) => item.skills.isEmpty || item.skills.every((skill) => skill.level <= 2))) {
-      issues.add((title: 'Rencana coaching operator', detail: '${operator.name} di ${operator.line} belum memiliki skill level tinggi yang tercatat. Verifikasi observasi kerja dan buat coaching pada proses ${operator.process}.', icon: Icons.school_outlined));
-    }
-    return ListView(padding: const EdgeInsets.all(16), children: [
-      Text('Insight produksi', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.bold)),
-      const SizedBox(height: 8),
-      const Text('Insight lokal berbasis aturan; ini bukan diagnosis sebab-akibat AI. Catat downtime/defect untuk analisis yang lebih akurat.'),
-      const SizedBox(height: 12),
-      if (issues.isEmpty)
-        const _EmptyState(message: 'Belum ditemukan kondisi yang memicu peringatan, atau belum cukup data. Periksa kembali pencatatan target dan aktual.')
-      else
-        ...issues.map((issue) => Card(
-              child: ListTile(
-                leading: Icon(issue.icon, color: Colors.orange[800]),
-                title: Text(issue.title, style: const TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: Padding(padding: const EdgeInsets.only(top: 6), child: Text(issue.detail)),
-                isThreeLine: true,
-              ),
-            )),
-    ]);
-  }
-}
-
-class OperatorFormDialog extends StatefulWidget {
-  const OperatorFormDialog({super.key, this.operator});
-  final SewingOperator? operator;
-
-  @override
-  State<OperatorFormDialog> createState() => _OperatorFormDialogState();
-}
-
-class _OperatorFormDialogState extends State<OperatorFormDialog> {
-  final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _name;
-  late final TextEditingController _line;
-  late final TextEditingController _process;
-  late final TextEditingController _skills;
-
-  @override
-  void initState() {
-    super.initState();
-    final operator = widget.operator;
-    _name = TextEditingController(text: operator?.name ?? '');
-    _line = TextEditingController(text: operator?.line ?? '');
-    _process = TextEditingController(text: operator?.process ?? '');
-    _skills = TextEditingController(text: operator?.skills.map((skill) => '${skill.process}: ${skill.level}').join('\n') ?? '');
-  }
-
-  @override
-  void dispose() {
-    _name.dispose();
-    _line.dispose();
-    _process.dispose();
-    _skills.dispose();
-    super.dispose();
-  }
-
-  List<Skill> _parseSkills() {
-    return _skills.text.split('\n').map((line) {
-      final parts = line.split(':');
-      final process = parts.first.trim();
-      final level = parts.length > 1 ? int.tryParse(parts.last.trim()) ?? 1 : 1;
-      return Skill(process, level.clamp(1, 5));
-    }).where((skill) => skill.process.isNotEmpty).toList();
-  }
-
-  @override
-  Widget build(BuildContext context) => AlertDialog(
-        title: Text(widget.operator == null ? 'Tambah operator' : 'Edit operator'),
-        content: SizedBox(
-          width: 440,
-          child: Form(
-            key: _formKey,
-            child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-              TextFormField(controller: _name, decoration: const InputDecoration(labelText: 'Nama operator'), validator: _required),
+  Widget build(BuildContext context) => StreamBuilder<List<Map<String, dynamic>>>(
+        stream: db.from('production_entries').stream(primaryKey: ['id']).order('created_at', ascending: false),
+        builder: (context, snapshot) {
+          final rows = snapshot.data ?? [];
+          final target = rows.fold<int>(0, (s, r) => s + ((r['target'] as num?)?.toInt() ?? 0));
+          final actual = rows.fold<int>(0, (s, r) => s + ((r['actual'] as num?)?.toInt() ?? 0));
+          final achievement = target == 0 ? 0.0 : actual * 100 / target;
+          return ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Text('Ringkasan produksi', style: Theme.of(context).textTheme.headlineSmall),
               const SizedBox(height: 12),
-              TextFormField(controller: _line, decoration: const InputDecoration(labelText: 'Line / tim'), validator: _required),
-              const SizedBox(height: 12),
-              TextFormField(controller: _process, decoration: const InputDecoration(labelText: 'Proses utama (contoh: Obras)'), validator: _required),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: _skills,
-                minLines: 3,
-                maxLines: 6,
-                decoration: const InputDecoration(labelText: 'Skill per proses', hintText: 'Sambung: 4\nObras: 2', helperText: 'Satu skill per baris, level 1–5.'),
-                validator: (value) {
-                  for (final line in (value ?? '').split('\n').where((line) => line.trim().isNotEmpty)) {
-                    final parts = line.split(':');
-                    if (parts.length > 1) {
-                      final level = int.tryParse(parts.last.trim());
-                      if (level == null || level < 1 || level > 5) return 'Level skill harus angka 1–5.';
-                    }
-                  }
-                  return null;
-                },
-              ),
-            ])),
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Batal')),
-          FilledButton(onPressed: () {
-            if (!_formKey.currentState!.validate()) return;
-            Navigator.pop(context, SewingOperator(
-              id: widget.operator?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
-              name: _name.text.trim(),
-              line: _line.text.trim(),
-              process: _process.text.trim(),
-              skills: _parseSkills(),
-            ));
-          }, child: const Text('Simpan')),
-        ],
+              Wrap(spacing: 10, runSpacing: 10, children: [
+                _Metric('Catatan', '${rows.length}', Icons.receipt_long),
+                _Metric('Target', '$target pcs', Icons.flag),
+                _Metric('Aktual', '$actual pcs', Icons.check_circle_outline),
+                _Metric('Pencapaian', '${achievement.toStringAsFixed(0)}%', Icons.trending_up),
+              ]),
+              if (snapshot.hasError) Padding(padding: const EdgeInsets.only(top: 12), child: Text('Gagal memuat produksi: ${snapshot.error}')),
+              if (rows.isEmpty && snapshot.connectionState == ConnectionState.waiting) const Padding(padding: EdgeInsets.all(24), child: Center(child: CircularProgressIndicator())),
+              ...rows.map((r) => Card(child: ListTile(
+                title: Text('${r['style_name']} • ${r['process']}'),
+                subtitle: Text('${r['line_name']} • ${r['actual']} / ${r['target']} pcs • defect ${r['defects'] ?? 0}'),
+                trailing: Text('${r['created_at']}'.toString().split('T').first),
+              ))),
+            ],
+          );
+        },
       );
 }
 
-class StyleFormDialog extends StatefulWidget {
-  const StyleFormDialog({super.key, this.style});
-  final StyleProduction? style;
-
-  @override
-  State<StyleFormDialog> createState() => _StyleFormDialogState();
-}
-
-class _StyleFormDialogState extends State<StyleFormDialog> {
-  final _formKey = GlobalKey<FormState>();
-  late final TextEditingController _name;
-  late final TextEditingController _process;
-  late final TextEditingController _target;
-  late final TextEditingController _actual;
-
-  @override
-  void initState() {
-    super.initState();
-    final style = widget.style;
-    _name = TextEditingController(text: style?.name ?? '');
-    _process = TextEditingController(text: style?.process ?? '');
-    _target = TextEditingController(text: style?.target.toString() ?? '');
-    _actual = TextEditingController(text: style?.actual.toString() ?? '0');
-  }
-
-  @override
-  void dispose() {
-    _name.dispose();
-    _process.dispose();
-    _target.dispose();
-    _actual.dispose();
-    super.dispose();
-  }
-
-  String? _positiveInteger(String? value) {
-    final number = int.tryParse(value ?? '');
-    if (number == null || number < 0) return 'Masukkan angka 0 atau lebih.';
-    return null;
-  }
-
-  @override
-  Widget build(BuildContext context) => AlertDialog(
-        title: Text(widget.style == null ? 'Tambah style / target' : 'Edit style / output'),
-        content: SizedBox(
-          width: 440,
-          child: Form(key: _formKey, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-            TextFormField(controller: _name, decoration: const InputDecoration(labelText: 'Nama / kode style'), validator: _required),
-            const SizedBox(height: 12),
-            TextFormField(controller: _process, decoration: const InputDecoration(labelText: 'Proses'), validator: _required),
-            const SizedBox(height: 12),
-            TextFormField(controller: _target, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Target harian (pcs)'), validator: (value) {
-              final error = _positiveInteger(value);
-              if (error != null) return error;
-              if (int.parse(value!) == 0) return 'Target harus lebih dari 0.';
-              return null;
-            }),
-            const SizedBox(height: 12),
-            TextFormField(controller: _actual, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Output aktual (pcs)'), validator: _positiveInteger),
-          ]))),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Batal')),
-          FilledButton(onPressed: () {
-            if (!_formKey.currentState!.validate()) return;
-            Navigator.pop(context, StyleProduction(
-              id: widget.style?.id ?? DateTime.now().microsecondsSinceEpoch.toString(),
-              name: _name.text.trim(),
-              process: _process.text.trim(),
-              target: int.parse(_target.text),
-              actual: int.parse(_actual.text),
-            ));
-          }, child: const Text('Simpan')),
-        ],
-      );
-}
-
-String? _required(String? value) => (value == null || value.trim().isEmpty) ? 'Bagian ini wajib diisi.' : null;
-
-class _MetricCard extends StatelessWidget {
-  const _MetricCard({required this.label, required this.value, required this.icon, required this.color});
-  final String label;
-  final String value;
+class _Metric extends StatelessWidget {
+  const _Metric(this.label, this.value, this.icon);
+  final String label, value;
   final IconData icon;
-  final Color color;
-
   @override
   Widget build(BuildContext context) => SizedBox(
-        width: (MediaQuery.sizeOf(context).width - 44) / 2,
-        child: Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Icon(icon, color: color),
-          const SizedBox(height: 12),
-          Text(label, style: Theme.of(context).textTheme.bodyMedium),
-          const SizedBox(height: 3),
-          Text(value, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
-        ]))),
-      );
+    width: (MediaQuery.sizeOf(context).width - 42) / 2,
+    child: Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Icon(icon), const SizedBox(height: 8), Text(label),
+      Text(value, style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+    ]))),
+  );
 }
 
-class _StyleCard extends StatelessWidget {
-  const _StyleCard({required this.style, this.compact = false});
-  final StyleProduction style;
-  final bool compact;
+class _DataList extends StatelessWidget {
+  const _DataList({required this.db, required this.table, required this.isOperator, required this.isLeader, required this.onEdit, required this.onDelete});
+  final SupabaseClient db;
+  final String table;
+  final bool isOperator, isLeader;
+  final ValueChanged<Map<String, dynamic>> onEdit, onDelete;
 
   @override
-  Widget build(BuildContext context) => Card(
-        margin: const EdgeInsets.only(bottom: 8),
-        child: Padding(padding: const EdgeInsets.all(14), child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('${style.name} • ${style.process}', style: const TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          LinearProgressIndicator(value: (style.achievement / 100).clamp(0.0, 1.0), minHeight: 7),
-          const SizedBox(height: 6),
-          Text('Aktual ${style.actual} / target ${style.target} pcs • ${style.achievement.toStringAsFixed(0)}%'),
-        ])),
-      );
+  Widget build(BuildContext context) => StreamBuilder<List<Map<String, dynamic>>>(
+    stream: isOperator
+        ? db.from(table).stream(primaryKey: ['id']).order('name')
+        : db.from(table).stream(primaryKey: ['id']).order('created_at', ascending: false),
+    builder: (context, snapshot) {
+      final rows = snapshot.data ?? [];
+      return ListView(padding: const EdgeInsets.all(16), children: [
+        Text(isOperator ? 'Operator dan skill' : 'Produksi, proses dan target', style: Theme.of(context).textTheme.headlineSmall),
+        if (snapshot.hasError) Text('Gagal memuat data: ${snapshot.error}'),
+        if (rows.isEmpty && !snapshot.hasError) const Padding(padding: EdgeInsets.only(top: 16), child: Text('Belum ada data.')),
+        ...rows.map((row) => Card(child: ListTile(
+          title: Text(isOperator ? '${row['name']}' : '${row['style_name']} • ${row['process']}'),
+          subtitle: Text(isOperator
+              ? '${row['line_name']} • ${row['main_process']}\nSkill: ${jsonEncode(row['skills'] ?? [])}'
+              : '${row['line_name']} • aktual ${row['actual']} / ${row['target']} • defect ${row['defects'] ?? 0} • downtime ${row['downtime_minutes'] ?? 0} menit'),
+          isThreeLine: true,
+          trailing: isLeader ? PopupMenuButton<String>(
+            onSelected: (action) => action == 'edit' ? onEdit(row) : onDelete(row),
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'edit', child: Text('Edit')),
+              PopupMenuItem(value: 'delete', child: Text('Hapus')),
+            ],
+          ) : null,
+        ))),
+      ]);
+    },
+  );
 }
 
-class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.message});
-  final String message;
+class _RecordDialog extends StatefulWidget {
+  const _RecordDialog({required this.isOperator, this.row});
+  final bool isOperator;
+  final Map<String, dynamic>? row;
+  @override
+  State<_RecordDialog> createState() => _RecordDialogState();
+}
+
+class _RecordDialogState extends State<_RecordDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final Map<String, TextEditingController> _fields;
+  static const _operatorFields = ['name', 'line_name', 'main_process', 'skills'];
+  static const _productionFields = ['style_name', 'process', 'line_name', 'target', 'actual', 'defects', 'downtime_minutes'];
+
+  List<String> get _names => widget.isOperator ? _operatorFields : _productionFields;
 
   @override
-  Widget build(BuildContext context) => Card(
-        child: Padding(padding: const EdgeInsets.all(20), child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Icon(Icons.info_outline),
-          const SizedBox(width: 12),
-          Expanded(child: Text(message)),
-        ])),
-      );
+  void initState() {
+    super.initState();
+    _fields = {for (final name in _names) name: TextEditingController(text: _initial(name))};
+  }
+
+  String _initial(String name) {
+    final value = widget.row?[name];
+    if (name == 'skills' && value is List) {
+      return value.map((s) => '${s['process']}: ${s['level']}').join('\n');
+    }
+    if (value != null) return '$value';
+    return const {'actual': '0', 'defects': '0', 'downtime_minutes': '0'}[name] ?? '';
+  }
+
+  @override
+  void dispose() { for (final c in _fields.values) { c.dispose(); } super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    title: Text(widget.isOperator
+        ? (widget.row == null ? 'Tambah operator' : 'Edit operator')
+        : (widget.row == null ? 'Catat produksi' : 'Edit produksi')),
+    content: SizedBox(width: 440, child: Form(key: _formKey, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+      for (final name in _names) Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: TextFormField(
+          controller: _fields[name],
+          keyboardType: _isNumeric(name) ? TextInputType.number : TextInputType.text,
+          minLines: name == 'skills' ? 3 : 1,
+          maxLines: name == 'skills' ? 5 : 1,
+          decoration: InputDecoration(labelText: _label(name), hintText: name == 'skills' ? 'Obras: 3' : null),
+          validator: (value) {
+            final text = value?.trim() ?? '';
+            if (!_isOptional(name) && text.isEmpty) return 'Wajib diisi.';
+            if (_isNumeric(name)) {
+              final n = int.tryParse(text);
+              if (n == null || n < (name == 'target' ? 1 : 0)) return 'Masukkan angka yang valid.';
+            }
+            return null;
+          },
+        ),
+      ),
+    ])))),
+    actions: [
+      TextButton(onPressed: () => Navigator.pop(context), child: const Text('Batal')),
+      FilledButton(onPressed: () {
+        if (!_formKey.currentState!.validate()) return;
+        final data = <String, dynamic>{};
+        for (final name in _names) {
+          final value = _fields[name]!.text.trim();
+          if (name == 'skills') {
+            data[name] = value.split('\n').where((s) => s.trim().isNotEmpty).map((line) {
+              final parts = line.split(':');
+              final level = int.tryParse(parts.length > 1 ? parts.last.trim() : '1') ?? 1;
+              return {'process': parts.first.trim(), 'level': level.clamp(1, 5)};
+            }).toList();
+          } else if (_isNumeric(name)) {
+            data[name] = int.parse(value);
+          } else {
+            data[name] = value;
+          }
+        }
+        if (!widget.isOperator && widget.row == null) {
+          data['recorded_by'] = Supabase.instance.client.auth.currentUser!.id;
+        }
+        Navigator.pop(context, data);
+      }, child: const Text('Simpan')),
+    ],
+  );
+
+  bool _isNumeric(String name) => const {'target', 'actual', 'defects', 'downtime_minutes'}.contains(name);
+  bool _isOptional(String name) => name == 'skills' || name == 'actual' || name == 'defects' || name == 'downtime_minutes';
+  String _label(String name) => const {
+    'name': 'Nama operator', 'line_name': 'Line', 'main_process': 'Proses utama', 'skills': 'Skill per baris (proses: level)',
+    'style_name': 'Style', 'process': 'Proses', 'target': 'Target pcs', 'actual': 'Aktual pcs', 'defects': 'Defect pcs', 'downtime_minutes': 'Downtime menit',
+  }[name]!;
+}
+
+class _AiPage extends StatefulWidget {
+  const _AiPage({required this.db});
+  final SupabaseClient db;
+  @override
+  State<_AiPage> createState() => _AiPageState();
+}
+
+class _AiPageState extends State<_AiPage> {
+  bool _busy = false;
+  String _answer = 'Jalankan analisis untuk mendapatkan ringkasan produksi.';
+
+  Future<void> _analyze() async {
+    if (_apiBaseUrl.isEmpty) { setState(() => _answer = 'API_BASE_URL belum diatur pada build.'); return; }
+    setState(() { _busy = true; _answer = ''; });
+    try {
+      final token = widget.db.auth.currentSession?.accessToken;
+      final response = await http.post(
+        Uri.parse('$_apiBaseUrl/v1/ai/analyze'),
+        headers: {'Content-Type': 'application/json', if (token != null) 'Authorization': 'Bearer $token'},
+        body: jsonEncode({'question': 'Analisis bottleneck produksi sewing dan berikan tindakan prioritas.'}),
+      ).timeout(const Duration(seconds: 45));
+      if (response.statusCode < 200 || response.statusCode >= 300) throw Exception('Backend ${response.statusCode}: ${response.body}');
+      final data = jsonDecode(response.body) as Map<String, dynamic>;
+      setState(() => _answer = data['analysis']?.toString() ?? 'Tidak ada hasil analisis.');
+    } catch (e) {
+      setState(() => _answer = 'Analisis gagal: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(16), children: [
+    Text('AI problem solving', style: Theme.of(context).textTheme.headlineSmall),
+    const SizedBox(height: 8),
+    const Text('Rekomendasi adalah bantuan analisis, bukan bukti sebab-akibat. Validasi kondisi di lantai produksi.'),
+    const SizedBox(height: 12),
+    FilledButton.icon(onPressed: _busy ? null : _analyze, icon: const Icon(Icons.auto_awesome), label: Text(_busy ? 'Menganalisis...' : 'Analisis produksi')),
+    const SizedBox(height: 12),
+    Card(child: Padding(padding: const EdgeInsets.all(16), child: Text(_answer))),
+  ]);
 }
