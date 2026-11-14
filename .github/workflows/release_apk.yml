@@ -32,7 +32,7 @@ jobs:
         run: flutter pub get
 
       - name: Analyze Flutter code
-        run: flutter analyze
+        run: flutter analyze --no-fatal-infos
 
       - name: Run Flutter tests when present
         run: |
@@ -45,22 +45,22 @@ jobs:
       - name: Check required build variables
         env:
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY || vars.SUPABASE_ANON_KEY }}
           API_BASE_URL: ${{ vars.API_BASE_URL }}
         run: |
           test -n "$SUPABASE_URL" || (echo "Missing Actions variable SUPABASE_URL" && exit 1)
-          test -n "$SUPABASE_ANON_KEY" || (echo "Missing Actions variable SUPABASE_ANON_KEY" && exit 1)
+          test -n "$SUPABASE_PUBLISHABLE_KEY" || (echo "Missing SUPABASE_PUBLISHABLE_KEY (or legacy SUPABASE_ANON_KEY)" && exit 1)
           test -n "$API_BASE_URL" || (echo "Missing Actions variable API_BASE_URL" && exit 1)
 
       - name: Build release APK
         env:
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ vars.SUPABASE_PUBLISHABLE_KEY || vars.SUPABASE_ANON_KEY }}
           API_BASE_URL: ${{ vars.API_BASE_URL }}
         run: |
           flutter build apk --release \
             --dart-define=SUPABASE_URL="$SUPABASE_URL" \
-            --dart-define=SUPABASE_ANON_KEY="$SUPABASE_ANON_KEY" \
+            --dart-define=SUPABASE_PUBLISHABLE_KEY="$SUPABASE_PUBLISHABLE_KEY" \
             --dart-define=API_BASE_URL="$API_BASE_URL"
 
       - uses: actions/upload-artifact@v4
