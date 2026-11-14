@@ -5,16 +5,16 @@ import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 const _supabaseUrl = String.fromEnvironment('SUPABASE_URL');
-const _publishableKey = String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY');
+const _supabasePublishableKey = String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY');
 const _apiBaseUrl = String.fromEnvironment('API_BASE_URL');
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  if (_supabaseUrl.isNotEmpty && _publishableKey.isNotEmpty) {
+  if (_supabaseUrl.isNotEmpty && _supabasePublishableKey.isNotEmpty) {
     await Supabase.initialize(
       url: _supabaseUrl,
-      publishableKey: _publishableKey,
+      publishableKey: _supabasePublishableKey,
     );
   }
 
@@ -26,7 +26,8 @@ class LeaderToolkitApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final configured = _supabaseUrl.isNotEmpty && _publishableKey.isNotEmpty;
+    final configured =
+        _supabaseUrl.isNotEmpty && _supabasePublishableKey.isNotEmpty;
 
     return MaterialApp(
       title: 'Leader Toolkit',
@@ -57,7 +58,7 @@ class _SetupPage extends StatelessWidget {
           padding: EdgeInsets.all(24),
           child: Text(
             'Konfigurasi Supabase belum tersedia. '
-            'Atur SUPABASE_URL dan SUPABASE_PUBLISHABLE_KEY saat build.',
+            'Build dengan SUPABASE_URL dan SUPABASE_PUBLISHABLE_KEY.',
             textAlign: TextAlign.center,
           ),
         ),
@@ -73,11 +74,9 @@ class _AuthGate extends StatelessWidget {
   Widget build(BuildContext context) {
     return StreamBuilder<AuthState>(
       stream: Supabase.instance.client.auth.onAuthStateChange,
-      builder: (context, snapshot) {
-        if (Supabase.instance.client.auth.currentSession == null) {
-          return const _LoginPage();
-        }
-        return const _HomePage();
+      builder: (context, _) {
+        final session = Supabase.instance.client.auth.currentSession;
+        return session == null ? const _LoginPage() : const _HomePage();
       },
     );
   }
@@ -180,11 +179,6 @@ class _LoginPageState extends State<_LoginPage> {
                     onPressed: _busy ? null : _signIn,
                     child: Text(_busy ? 'Memproses...' : 'Masuk'),
                   ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'Akun harus dibuat oleh administrator Supabase.',
-                    textAlign: TextAlign.center,
-                  ),
                 ],
               ),
             ),
@@ -204,27 +198,39 @@ class _HomePage extends StatefulWidget {
 
 class _HomePageState extends State<_HomePage> {
   final _db = Supabase.instance.client;
-  late final Future<Map<String, dynamic>> _profileFuture;
   int _tab = 0;
+  String? _role;
+  String? _profileError;
 
   @override
   void initState() {
     super.initState();
-    _profileFuture = _loadProfile();
+    _loadProfile();
   }
 
-  Future<Map<String, dynamic>> _loadProfile() async {
-    final user = _db.auth.currentUser;
-    if (user == null) throw Exception('Sesi login tidak ditemukan.');
+  Future<void> _loadProfile() async {
+    try {
+      final user = _db.auth.currentUser;
+      if (user == null) throw Exception('Sesi login tidak ditemukan.');
 
-    return _db
-        .from('profiles')
-        .select('role')
-        .eq('id', user.id)
-        .single();
+      final row = await _db
+          .from('profiles')
+          .select('role')
+          .eq('id', user.id)
+          .single();
+
+      if (mounted) {
+        setState(() => _role = row['role'] as String? ?? 'supervisor');
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() => _profileError =
+            'Profil Supabase belum tersedia atau tidak dapat dibaca. Pastikan baris profiles memiliki UUID pengguna yang sama. ($error)');
+      }
+    }
   }
 
-  Future<void> _run(Future<void> Function() action) async {
+  Future<void> _notify(Future<void> Function() action) async {
     try {
       await action();
     } catch (error) {
@@ -236,19 +242,20 @@ class _HomePageState extends State<_HomePage> {
     }
   }
 
-  Future<void> _editRecord(
-    String table, {
-    Map<String, dynamic>? row,
-  }) async {
-    final isOperator = table == 'operators';
+  Future<void> _edit(String table, {Map<String, dynamic>? row}) async {
+    if (_role != 'leader') return;
+
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (_) => _RecordDialog(isOperator: isOperator, row: row),
+      builder: (_) => _RecordDialog(
+        isOperator: table == 'operators',
+        row: row,
+      ),
     );
 
     if (result == null) return;
 
-    await _run(() async {
+    await _notify(() async {
       if (row == null) {
         await _db.from(table).insert(result);
       } else {
@@ -257,16 +264,14 @@ class _HomePageState extends State<_HomePage> {
     });
   }
 
-  Future<void> _deleteRecord(
-    String table,
-    Map<String, dynamic> row,
-  ) async {
-    final label = row['name'] ?? row['style_name'] ?? 'data ini';
+  Future<void> _delete(String table, Map<String, dynamic> row) async {
+    if (_role != 'leader') return;
+
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (_) => AlertDialog(
         title: const Text('Hapus data?'),
-        content: Text('Hapus "$label"?'),
+        content: Text('Hapus "${row['name'] ?? row['style_name'] ?? 'data ini'}"?'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -281,110 +286,92 @@ class _HomePageState extends State<_HomePage> {
     );
 
     if (confirmed == true) {
-      await _run(() async {
-        await _db.from(table).delete().eq('id', row['id']);
-      });
+      await _notify(() async => _db.from(table).delete().eq('id', row['id']));
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<Map<String, dynamic>>(
-      future: _profileFuture,
-      builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return Scaffold(
-            appBar: AppBar(title: const Text('Leader Toolkit')),
-            body: Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Text(
-                  'Profil pengguna tidak ditemukan. Buat baris di tabel '
-                  'profiles dengan UUID Auth pengguna yang sama.\n\n'
-                  '${snapshot.error}',
-                ),
-              ),
-            ),
-          );
-        }
-
-        if (!snapshot.hasData) {
-          return const Scaffold(
-            body: Center(child: CircularProgressIndicator()),
-          );
-        }
-
-        final role = snapshot.data!['role'] as String? ?? 'supervisor';
-        final isLeader = role == 'leader';
-
-        final pages = <Widget>[
-          _Dashboard(db: _db),
-          _DataList(
-            db: _db,
-            table: 'operators',
-            isOperator: true,
-            isLeader: isLeader,
-            onEdit: (row) => _editRecord('operators', row: row),
-            onDelete: (row) => _deleteRecord('operators', row),
+    if (_profileError != null) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Leader Toolkit')),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(_profileError!),
           ),
-          _DataList(
-            db: _db,
-            table: 'production_entries',
-            isOperator: false,
-            isLeader: isLeader,
-            onEdit: (row) => _editRecord('production_entries', row: row),
-            onDelete: (row) => _deleteRecord('production_entries', row),
-          ),
-          _AiPage(db: _db),
-        ];
+        ),
+      );
+    }
 
-        return Scaffold(
-          appBar: AppBar(
-            title: Text('Leader Toolkit • ${isLeader ? 'Leader' : 'Supervisor'}'),
-            actions: [
-              IconButton(
-                tooltip: 'Keluar',
-                onPressed: () => _run(_db.auth.signOut),
-                icon: const Icon(Icons.logout),
-              ),
-            ],
+    if (_role == null) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    final pages = <Widget>[
+      _Dashboard(db: _db),
+      _DataList(
+        db: _db,
+        table: 'operators',
+        isOperator: true,
+        isLeader: _role == 'leader',
+        onEdit: (row) => _edit('operators', row: row),
+        onDelete: (row) => _delete('operators', row),
+      ),
+      _DataList(
+        db: _db,
+        table: 'production_entries',
+        isOperator: false,
+        isLeader: _role == 'leader',
+        onEdit: (row) => _edit('production_entries', row: row),
+        onDelete: (row) => _delete('production_entries', row),
+      ),
+      _AiPage(db: _db),
+    ];
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Leader Toolkit • ${_role == 'leader' ? 'Leader' : 'Supervisor'}'),
+        actions: [
+          IconButton(
+            tooltip: 'Keluar',
+            onPressed: () => _notify(_db.auth.signOut),
+            icon: const Icon(Icons.logout),
           ),
-          body: IndexedStack(index: _tab, children: pages),
-          floatingActionButton: isLeader && (_tab == 1 || _tab == 2)
-              ? FloatingActionButton.extended(
-                  onPressed: () => _editRecord(
-                    _tab == 1 ? 'operators' : 'production_entries',
-                  ),
-                  icon: const Icon(Icons.add),
-                  label: Text(
-                    _tab == 1 ? 'Tambah operator' : 'Catat produksi',
-                  ),
-                )
-              : null,
-          bottomNavigationBar: NavigationBar(
-            selectedIndex: _tab,
-            onDestinationSelected: (index) => setState(() => _tab = index),
-            destinations: const [
-              NavigationDestination(
-                icon: Icon(Icons.dashboard_outlined),
-                label: 'Ringkasan',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.people_outline),
-                label: 'Operator',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.factory_outlined),
-                label: 'Produksi',
-              ),
-              NavigationDestination(
-                icon: Icon(Icons.lightbulb_outline),
-                label: 'AI',
-              ),
-            ],
+        ],
+      ),
+      body: IndexedStack(index: _tab, children: pages),
+      floatingActionButton: _role == 'leader' && (_tab == 1 || _tab == 2)
+          ? FloatingActionButton.extended(
+              onPressed: () => _edit(_tab == 1 ? 'operators' : 'production_entries'),
+              icon: const Icon(Icons.add),
+              label: Text(_tab == 1 ? 'Tambah operator' : 'Catat produksi'),
+            )
+          : null,
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _tab,
+        onDestinationSelected: (index) => setState(() => _tab = index),
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.dashboard_outlined),
+            label: 'Ringkasan',
           ),
-        );
-      },
+          NavigationDestination(
+            icon: Icon(Icons.people_outline),
+            label: 'Operator',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.factory_outlined),
+            label: 'Produksi',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.lightbulb_outline),
+            label: 'AI',
+          ),
+        ],
+      ),
     );
   }
 }
@@ -403,6 +390,7 @@ class _Dashboard extends StatelessWidget {
           .order('created_at', ascending: false),
       builder: (context, snapshot) {
         final rows = snapshot.data ?? [];
+
         final target = rows.fold<int>(
           0,
           (sum, row) => sum + ((row['target'] as num?)?.toInt() ?? 0),
@@ -411,7 +399,7 @@ class _Dashboard extends StatelessWidget {
           0,
           (sum, row) => sum + ((row['actual'] as num?)?.toInt() ?? 0),
         );
-        final achievement = target == 0 ? 0.0 : actual * 100 / target;
+        final achievement = target == 0 ? 0.0 : (actual / target) * 100;
 
         return ListView(
           padding: const EdgeInsets.all(16),
@@ -519,10 +507,7 @@ class _DataList extends StatelessWidget {
       stream: db
           .from(table)
           .stream(primaryKey: ['id'])
-          .order(
-            isOperator ? 'name' : 'created_at',
-            ascending: isOperator,
-          ),
+          .order(isOperator ? 'name' : 'created_at', ascending: false),
       builder: (context, snapshot) {
         final rows = snapshot.data ?? [];
 
@@ -589,7 +574,10 @@ class _DataList extends StatelessWidget {
 }
 
 class _RecordDialog extends StatefulWidget {
-  const _RecordDialog({required this.isOperator, this.row});
+  const _RecordDialog({
+    required this.isOperator,
+    this.row,
+  });
 
   final bool isOperator;
   final Map<String, dynamic>? row;
@@ -727,12 +715,13 @@ class _RecordDialogState extends State<_RecordDialog> {
                     .where((line) => line.trim().isNotEmpty)
                     .map((line) {
                   final parts = line.split(':');
+                  final process = parts.first.trim();
                   final level = int.tryParse(
                         parts.length > 1 ? parts.last.trim() : '1',
                       ) ??
                       1;
                   return {
-                    'process': parts.first.trim(),
+                    'process': process,
                     'level': level.clamp(1, 5),
                   };
                 }).toList();
